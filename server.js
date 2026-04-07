@@ -172,7 +172,7 @@ function formatRoomWithMicCheck(room) {
 }
 
 // Voice Server URL
-const VOICE_SERVER_URL = process.env.VOICE_SERVER_URL || 'http://62.84.176.222:3001';
+const VOICE_SERVER_URL = process.env.VOICE_SERVER_URL || 'http://89.116.24.236:8088';
 
 // ============================================================
 // 🛡️ Rate Limiting - حماية من الهجمات
@@ -5907,7 +5907,7 @@ app.get('/api/reels', authenticate, async (req, res) => {
         const skip = (page - 1) * limit;
         const userId = req.user.id;
         const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-        const MEDIA_SERVER_URL = process.env.MEDIA_SERVER_URL || 'http://62.84.176.222:3002';
+        const MEDIA_SERVER_URL = process.env.MEDIA_SERVER_URL || 'http://89.116.24.236:3002';
         
         // دالة لتوليد WebM URL من video URL (للتوافق مع MediaTek)
         const getWebmUrl = (videoUrl) => {
@@ -6454,7 +6454,7 @@ app.post('/api/reels/test', authenticate, async (req, res) => {
 // إصلاح روابط الفيديو القديمة (تحويل localhost إلى VPS)
 app.post('/api/reels/fix-urls', authenticate, async (req, res) => {
     try {
-        const MEDIA_SERVER_URL = process.env.MEDIA_SERVER_URL || 'http://62.84.176.222:3002';
+        const MEDIA_SERVER_URL = process.env.MEDIA_SERVER_URL || 'http://89.116.24.236:3002';
         
         // جلب جميع الريلز التي تحتوي على localhost
         const reelsToFix = await prisma.reel.findMany({
