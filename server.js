@@ -1501,6 +1501,65 @@ app.get('/api/users/:userId/posts', authenticate, async (req, res) => {
     }
 });
 
+// جلب ريلز مستخدم آخر
+app.get('/api/users/:userId/reels', authenticate, async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const currentUserId = req.user.id;
+        const page = parseInt(req.query.page) || 1;
+        const limit = 20;
+        
+        // التحقق من خصوصية الحساب
+        const targetUser = await prisma.user.findUnique({
+            where: { id: userId },
+            select: { isPrivate: true }
+        });
+        
+        // إذا كان الحساب خاص ولم يكن المستخدم الحالي هو صاحب الحساب
+        if (targetUser?.isPrivate && userId !== currentUserId) {
+            // التحقق من المتابعة
+            const isFollowing = await prisma.follow.findUnique({
+                where: { followerId_followingId: { followerId: currentUserId, followingId: userId } }
+            });
+            
+            if (!isFollowing) {
+                return res.json({ reels: [], isPrivate: true, message: 'هذا الحساب خاص' });
+            }
+        }
+        
+        const reels = await prisma.reel.findMany({
+            where: { userId },
+            include: {
+                user: { select: { id: true, username: true, avatar: true, level: true } },
+                reelLikes: { where: { userId: currentUserId } }
+            },
+            orderBy: { createdAt: 'desc' },
+            skip: (page - 1) * limit,
+            take: limit
+        });
+        
+        const formattedReels = reels.map(reel => ({
+            ...reel,
+            isLiked: reel.reelLikes.length > 0,
+            isMine: reel.userId === currentUserId,
+            reelLikes: undefined,
+            commentsCount: reel.commentsCount || 0
+        }));
+        
+        const totalReels = await prisma.reel.count({ where: { userId } });
+        
+        res.json({
+            reels: formattedReels,
+            totalReels,
+            page,
+            hasMore: page * limit < totalReels
+        });
+    } catch (error) {
+        console.error('Get user reels error:', error);
+        res.status(500).json({ error: 'خطأ في جلب الريلز' });
+    }
+});
+
 // جلب الهدايا المستلمة لمستخدم آخر
 app.get('/api/users/:userId/gifts', authenticate, async (req, res) => {
     try {
