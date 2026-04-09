@@ -1163,6 +1163,45 @@ app.get('/api/profile/posts', authenticate, async (req, res) => {
     }
 });
 
+// جلب ريلز المستخدم
+app.get('/api/profile/reels', authenticate, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const page = parseInt(req.query.page) || 1;
+        const limit = 20;
+        
+        const reels = await prisma.reel.findMany({
+            where: { userId },
+            include: {
+                user: { select: { id: true, username: true, avatar: true, level: true } },
+                reelLikes: { where: { userId } }
+            },
+            orderBy: { createdAt: 'desc' },
+            skip: (page - 1) * limit,
+            take: limit
+        });
+        
+        const formattedReels = reels.map(reel => ({
+            ...reel,
+            isLiked: reel.reelLikes.length > 0,
+            reelLikes: undefined,
+            commentsCount: reel.commentsCount || 0
+        }));
+        
+        const totalReels = await prisma.reel.count({ where: { userId } });
+        
+        res.json({
+            reels: formattedReels,
+            totalReels,
+            page,
+            hasMore: page * limit < totalReels
+        });
+    } catch (error) {
+        console.error('Get user reels error:', error);
+        res.status(500).json({ error: 'خطأ في جلب الريلز' });
+    }
+});
+
 // جلب إحصائيات الملف الشخصي
 app.get('/api/profile/stats', authenticate, async (req, res) => {
     try {
