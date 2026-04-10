@@ -631,36 +631,74 @@ app.post('/api/auth/register/request-otp', authRateLimit, async (req, res) => {
             });
         }
         
-        // التحقق من عدم إرسال OTP مؤخراً (منع السبام)
-        const existingOTP = otpStore.get(emailLower);
-        if (existingOTP && existingOTP.expiresAt > Date.now() - 60000) { // دقيقة واحدة بين الطلبات
-            const waitTime = Math.ceil((existingOTP.expiresAt - Date.now() + 60000) / 1000 / 60);
-            return res.status(429).json({ error: `انتظر ${waitTime} دقيقة قبل طلب رمز جديد` });
+        // توليد كود إحالة للمستخدم الجديد
+        const newReferralCode = crypto.randomBytes(4).toString('hex').toUpperCase();
+        
+        // تشفير كلمة المرور
+        const hashedPassword = await bcrypt.hash(password, 10);
+
+        // إنشاء المستخدم مباشرة وتخطي OTP
+        const userData = {
+            username,
+            email: emailLower,
+            password: hashedPassword,
+            referralCode: newReferralCode,
+            coins: 100,
+            gems: 10,
+            isEmailVerified: true, // تم تعيينها لـ true لتخطي التحقق من البريد
+            deviceId: deviceId || null
+        };
+
+        // ربط المستخدم بالمُحيل
+        userData.referrer = { connect: { id: referrer.id } };
+
+        const user = await prisma.user.create({ data: userData });
+
+        // تسجيل الجهاز
+        if (deviceId) {
+            try {
+                await prisma.$executeRaw`
+                    INSERT INTO "registered_device" ("id", "deviceId", "userId", "platform", "createdAt")
+                    VALUES (gen_random_uuid()::text, ${deviceId}, ${user.id}, 'mobile', NOW())
+                    ON CONFLICT ("deviceId") DO NOTHING
+                `;
+            } catch (deviceError) {
+                console.log('⚠️ Device registration warning:', deviceError.message);
+            }
         }
-        
-        // توليد OTP
-        const otp = generateOTP();
-        const expiresAt = Date.now() + 10 * 60 * 1000; // 10 دقائق
-        
-        // تخزين البيانات مؤقتاً
-        otpStore.set(emailLower, {
-            otp,
-            expiresAt,
-            userData: { username, email: emailLower, password, referralCode, deviceId }
+
+        // مكافأة المُحيل
+        const settings = await prisma.appSettings.findUnique({ where: { id: 'settings' } });
+        await prisma.user.update({
+            where: { id: referrer.id },
+            data: { gems: { increment: settings?.referralGems || 50 } }
         });
-        
-        // إرسال OTP
-        const sent = await sendOTPEmail(emailLower, otp, username);
-        
-        if (!sent) {
-            otpStore.delete(emailLower);
-            return res.status(500).json({ error: 'فشل إرسال رمز التحقق، حاول مرة أخرى' });
-        }
-        
+        await createNotification(
+            referrer.id,
+            'referral',
+            '🎉 عضو جديد في فريقك!',
+            `انضم ${username} لفريقك وحصلت على ${settings?.referralGems || 50} جوهرة`,
+            { newUserId: user.id, gems: settings?.referralGems || 50 }
+        );
+
+        // إشعار ترحيبي
+        await createNotification(
+            user.id,
+            'system',
+            '🎊 أهلاً بك في ويتر!',
+            'حصلت على 100 عملة و 10 جواهر كهدية ترحيبية. استمتع بالتطبيق!',
+            { coins: 100, gems: 10 }
+        );
+
+        // إنشاء التوكن
+        const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '30d' });
+        const { password: _, ...userWithoutPassword } = user;
+
         res.json({ 
             success: true, 
-            message: 'تم إرسال رمز التحقق إلى بريدك الإلكتروني',
-            email: emailLower
+            message: 'تم إنشاء الحساب بنجاح',
+            user: userWithoutPassword,
+            token
         });
         
     } catch (error) {
