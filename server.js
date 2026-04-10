@@ -2258,17 +2258,56 @@ app.get('/api/rooms', authenticate, async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 10;
+        
+        // جلب جميع الغرف
+        const allRooms = await prisma.chatRoom.findMany({
+            include: {
+                owner: { select: { id: true, username: true, avatar: true, level: true, experience: true } },
+                _count: { select: { members: true, messages: true } }
+            }
+        });
+        
+        // ترتيب عشوائي للغرف
+        const shuffledRooms = allRooms.sort(() => Math.random() - 0.5);
+        
+        // تطبيق pagination بعد الترتيب العشوائي
+        const skip = (page - 1) * limit;
+        const paginatedRooms = shuffledRooms.slice(skip, skip + limit);
+        
+        const formattedRooms = paginatedRooms.map(room => {
+            const formatted = formatRoomWithMicCheck(room);
+            return {
+                ...formatted,
+                membersCount: room._count.members,
+                messagesCount: room._count.messages,
+                _count: undefined
+            };
+        });
+        
+        res.json(formattedRooms);
+        
+    } catch (error) {
+        console.error('Get rooms error:', error);
+        res.status(500).json({ error: 'خطأ في جلب الغرف' });
+    }
+});
+
+// الغرف الأعلى تقييماً (مرتبة حسب المستوى)
+app.get('/api/rooms/top-rated', authenticate, async (req, res) => {
+    try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
         const skip = (page - 1) * limit;
         
-        // جلب الغرف مع عدد الرسائل للترتيب
+        // جلب الغرف مرتبة حسب المستوى من الأعلى إلى الأدنى
         const rooms = await prisma.chatRoom.findMany({
             include: {
                 owner: { select: { id: true, username: true, avatar: true, level: true, experience: true } },
                 _count: { select: { members: true, messages: true } }
             },
             orderBy: [
-                { totalGiftPoints: 'desc' },
-                { createdAt: 'desc' }
+                { level: 'desc' },
+                { totalGiftPoints: 'desc' }
             ],
             skip,
             take: limit
@@ -2287,8 +2326,8 @@ app.get('/api/rooms', authenticate, async (req, res) => {
         res.json(formattedRooms);
         
     } catch (error) {
-        console.error('Get rooms error:', error);
-        res.status(500).json({ error: 'خطأ في جلب الغرف' });
+        console.error('Get top rated rooms error:', error);
+        res.status(500).json({ error: 'خطأ في جلب الغرف الأعلى تقييماً' });
     }
 });
 
