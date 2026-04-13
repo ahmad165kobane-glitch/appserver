@@ -529,20 +529,20 @@ async function sendOTPEmail(email, otp, username) {
         console.log('📤 Attempting to send OTP to:', email);
         
         const { data, error } = await resend.emails.send({
-            from: 'Witter <noreply@iqfx.shop>',
+            from: 'Wendo <noreply@wndo.store>',
             to: email,
-            subject: '🔐 رمز التحقق - ويتر',
+            subject: '🔐 رمز التحقق - ويندو',
             html: `
                 <div dir="rtl" style="font-family: 'Segoe UI', Tahoma, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-                    <div style="background: linear-gradient(135deg, #8B5CF6, #EC4899); padding: 30px; border-radius: 16px; text-align: center;">
-                        <h1 style="color: white; margin: 0; font-size: 28px;">ويتر</h1>
+                    <div style="background: linear-gradient(135deg, #F59E0B, #D97706); padding: 30px; border-radius: 16px; text-align: center;">
+                        <h1 style="color: white; margin: 0; font-size: 28px;">ويندو</h1>
                         <p style="color: rgba(255,255,255,0.9); margin: 10px 0 0;">مرحباً ${username}!</p>
                     </div>
                     
                     <div style="background: #1a1a2e; padding: 30px; border-radius: 16px; margin-top: 20px; text-align: center;">
                         <p style="color: #9CA3AF; font-size: 16px; margin: 0 0 20px;">رمز التحقق الخاص بك هو:</p>
                         
-                        <div style="background: linear-gradient(135deg, #8B5CF6, #EC4899); padding: 20px 40px; border-radius: 12px; display: inline-block;">
+                        <div style="background: linear-gradient(135deg, #F59E0B, #D97706); padding: 20px 40px; border-radius: 12px; display: inline-block;">
                             <span style="color: white; font-size: 36px; font-weight: bold; letter-spacing: 8px;">${otp}</span>
                         </div>
                         
@@ -631,74 +631,30 @@ app.post('/api/auth/register/request-otp', authRateLimit, async (req, res) => {
             });
         }
         
-        // توليد كود إحالة للمستخدم الجديد
-        const newReferralCode = crypto.randomBytes(4).toString('hex').toUpperCase();
+        // توليد OTP وتخزين البيانات مؤقتاً
+        const otp = generateOTP();
+        const expiresAt = Date.now() + 10 * 60 * 1000; // 10 دقائق
         
-        // تشفير كلمة المرور
-        const hashedPassword = await bcrypt.hash(password, 10);
-
-        // إنشاء المستخدم مباشرة وتخطي OTP
-        const userData = {
-            username,
-            email: emailLower,
-            password: hashedPassword,
-            referralCode: newReferralCode,
-            coins: 100,
-            gems: 10,
-            isEmailVerified: true, // تم تعيينها لـ true لتخطي التحقق من البريد
-            deviceId: deviceId || null
-        };
-
-        // ربط المستخدم بالمُحيل
-        userData.referrer = { connect: { id: referrer.id } };
-
-        const user = await prisma.user.create({ data: userData });
-
-        // تسجيل الجهاز
-        if (deviceId) {
-            try {
-                await prisma.$executeRaw`
-                    INSERT INTO "registered_device" ("id", "deviceId", "userId", "platform", "createdAt")
-                    VALUES (gen_random_uuid()::text, ${deviceId}, ${user.id}, 'mobile', NOW())
-                    ON CONFLICT ("deviceId") DO NOTHING
-                `;
-            } catch (deviceError) {
-                console.log('⚠️ Device registration warning:', deviceError.message);
-            }
-        }
-
-        // مكافأة المُحيل
-        const settings = await prisma.appSettings.findUnique({ where: { id: 'settings' } });
-        await prisma.user.update({
-            where: { id: referrer.id },
-            data: { gems: { increment: settings?.referralGems || 50 } }
+        otpStore.set(emailLower, {
+            otp,
+            expiresAt,
+            userData: { username, email: emailLower, password, referralCode, deviceId }
         });
-        await createNotification(
-            referrer.id,
-            'referral',
-            '🎉 عضو جديد في فريقك!',
-            `انضم ${username} لفريقك وحصلت على ${settings?.referralGems || 50} جوهرة`,
-            { newUserId: user.id, gems: settings?.referralGems || 50 }
-        );
-
-        // إشعار ترحيبي
-        await createNotification(
-            user.id,
-            'system',
-            '🎊 أهلاً بك في ويتر!',
-            'حصلت على 100 عملة و 10 جواهر كهدية ترحيبية. استمتع بالتطبيق!',
-            { coins: 100, gems: 10 }
-        );
-
-        // إنشاء التوكن
-        const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '30d' });
-        const { password: _, ...userWithoutPassword } = user;
-
+        
+        console.log('💾 OTP stored for:', emailLower, '| OTP:', otp);
+        
+        // إرسال OTP عبر البريد
+        const sent = await sendOTPEmail(emailLower, otp, username);
+        
+        if (!sent) {
+            otpStore.delete(emailLower);
+            return res.status(500).json({ error: 'فشل إرسال رمز التحقق' });
+        }
+        
         res.json({ 
             success: true, 
-            message: 'تم إنشاء الحساب بنجاح',
-            user: userWithoutPassword,
-            token
+            message: 'تم إرسال رمز التحقق إلى بريدك الإلكتروني',
+            email: emailLower
         });
         
     } catch (error) {
@@ -816,7 +772,7 @@ app.post('/api/auth/register/verify-otp', authRateLimit, async (req, res) => {
         await createNotification(
             user.id,
             'system',
-            '🎊 أهلاً بك في ويتر!',
+            '🎊 أهلاً بك في ويندو!',
             'حصلت على 100 عملة و 10 جواهر كهدية ترحيبية. استمتع بالتطبيق!',
             { coins: 100, gems: 10 }
         );
@@ -953,7 +909,7 @@ app.post('/api/auth/register', async (req, res) => {
         await createNotification(
             user.id,
             'system',
-            '🎊 أهلاً بك في ويتر!',
+            '🎊 أهلاً بك في ويندو!',
             'حصلت على 100 عملة و 10 جواهر كهدية ترحيبية. استمتع بالتطبيق!',
             { coins: 100, gems: 10 }
         );
@@ -1008,21 +964,158 @@ app.post('/api/auth/login', authRateLimit, async (req, res) => {
     }
 });
 
-// استعادة كلمة المرور
+// استعادة كلمة المرور - الخطوة 1: طلب رمز التحقق
 app.post('/api/auth/forgot-password', authRateLimit, async (req, res) => {
     try {
         const { email } = req.body;
-        const user = await prisma.user.findUnique({ where: { email } });
+        
+        if (!email) {
+            return res.status(400).json({ error: 'البريد الإلكتروني مطلوب' });
+        }
+        
+        const emailLower = email.toLowerCase().trim();
+        const user = await prisma.user.findUnique({ where: { email: emailLower } });
         
         if (!user) {
             return res.status(404).json({ error: 'البريد الإلكتروني غير مسجل' });
         }
         
-        // في الإنتاج: إرسال بريد إلكتروني
-        res.json({ message: 'تم إرسال رابط استعادة كلمة المرور إلى بريدك الإلكتروني' });
+        // توليد OTP
+        const otp = generateOTP();
+        const expiresAt = Date.now() + 10 * 60 * 1000; // 10 دقائق
+        
+        otpStore.set('reset_' + emailLower, {
+            otp,
+            expiresAt,
+            userId: user.id
+        });
+        
+        console.log('💾 Reset OTP stored for:', emailLower, '| OTP:', otp);
+        
+        // إرسال OTP عبر البريد
+        const sent = await sendOTPEmail(emailLower, otp, user.username);
+        
+        if (!sent) {
+            otpStore.delete('reset_' + emailLower);
+            return res.status(500).json({ error: 'فشل إرسال رمز التحقق' });
+        }
+        
+        res.json({ 
+            success: true, 
+            message: 'تم إرسال رمز التحقق إلى بريدك الإلكتروني',
+            email: emailLower
+        });
         
     } catch (error) {
+        console.error('Forgot password error:', error);
         res.status(500).json({ error: 'خطأ في استعادة كلمة المرور' });
+    }
+});
+
+// استعادة كلمة المرور - الخطوة 2: التحقق من الرمز وتعيين كلمة مرور جديدة
+app.post('/api/auth/reset-password', authRateLimit, async (req, res) => {
+    try {
+        const { email, otp, newPassword } = req.body;
+        
+        if (!email || !otp || !newPassword) {
+            return res.status(400).json({ error: 'جميع الحقول مطلوبة' });
+        }
+        
+        if (newPassword.length < 6) {
+            return res.status(400).json({ error: 'كلمة المرور يجب أن تكون 6 أحرف على الأقل' });
+        }
+        
+        const emailLower = email.toLowerCase().trim();
+        const storedData = otpStore.get('reset_' + emailLower);
+        
+        if (!storedData) {
+            return res.status(400).json({ error: 'لم يتم طلب استعادة كلمة المرور لهذا البريد' });
+        }
+        
+        // التحقق من انتهاء الصلاحية
+        if (storedData.expiresAt < Date.now()) {
+            otpStore.delete('reset_' + emailLower);
+            return res.status(400).json({ error: 'انتهت صلاحية رمز التحقق، اطلب رمزاً جديداً' });
+        }
+        
+        // التحقق من صحة OTP
+        if (storedData.otp !== otp) {
+            return res.status(400).json({ error: 'رمز التحقق غير صحيح' });
+        }
+        
+        // حذف OTP من التخزين
+        otpStore.delete('reset_' + emailLower);
+        
+        // تشفير كلمة المرور الجديدة
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
+        
+        // تحديث كلمة المرور
+        await prisma.user.update({
+            where: { id: storedData.userId },
+            data: { password: hashedPassword }
+        });
+        
+        console.log('✅ Password reset successful for:', emailLower);
+        
+        res.json({ 
+            success: true, 
+            message: 'تم تغيير كلمة المرور بنجاح' 
+        });
+        
+    } catch (error) {
+        console.error('Reset password error:', error);
+        res.status(500).json({ error: 'خطأ في إعادة تعيين كلمة المرور' });
+    }
+});
+
+// إعادة إرسال رمز استعادة كلمة المرور
+app.post('/api/auth/forgot-password/resend', authRateLimit, async (req, res) => {
+    try {
+        const { email } = req.body;
+        
+        if (!email) {
+            return res.status(400).json({ error: 'البريد الإلكتروني مطلوب' });
+        }
+        
+        const emailLower = email.toLowerCase().trim();
+        const storedData = otpStore.get('reset_' + emailLower);
+        
+        if (!storedData) {
+            return res.status(400).json({ error: 'لم يتم طلب استعادة كلمة المرور لهذا البريد' });
+        }
+        
+        // التحقق من مرور دقيقة على الأقل
+        const timeSinceLastOTP = Date.now() - (storedData.expiresAt - 10 * 60 * 1000);
+        if (timeSinceLastOTP < 60000) {
+            const waitTime = Math.ceil((60000 - timeSinceLastOTP) / 1000);
+            return res.status(429).json({ error: `انتظر ${waitTime} ثانية قبل إعادة الإرسال` });
+        }
+        
+        const user = await prisma.user.findUnique({ where: { id: storedData.userId } });
+        if (!user) {
+            return res.status(404).json({ error: 'المستخدم غير موجود' });
+        }
+        
+        // توليد OTP جديد
+        const otp = generateOTP();
+        const expiresAt = Date.now() + 10 * 60 * 1000;
+        
+        storedData.otp = otp;
+        storedData.expiresAt = expiresAt;
+        otpStore.set('reset_' + emailLower, storedData);
+        
+        // إرسال OTP
+        const sent = await sendOTPEmail(emailLower, otp, user.username);
+        
+        if (!sent) {
+            return res.status(500).json({ error: 'فشل إرسال رمز التحقق' });
+        }
+        
+        res.json({ success: true, message: 'تم إعادة إرسال رمز التحقق' });
+        
+    } catch (error) {
+        console.error('Resend reset OTP error:', error);
+        res.status(500).json({ error: 'خطأ في إعادة الإرسال' });
     }
 });
 
@@ -8796,7 +8889,7 @@ app.get('/privacy-policy', async (req, res) => {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>${title} - ويتر</title>
+    <title>${title} - ويندو</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -8900,7 +8993,7 @@ app.get('/terms', async (req, res) => {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>${title} - ويتر</title>
+    <title>${title} - ويندو</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -9036,7 +9129,7 @@ async function initLegalPages() {
         await prisma.$executeRaw`
             INSERT INTO "LegalPage" ("id", "slug", "title", "content")
             VALUES 
-                (gen_random_uuid()::text, 'privacy-policy', 'سياسة الخصوصية', 'مرحباً بك في تطبيق ويتر. نحن نحترم خصوصيتك ونلتزم بحماية بياناتك الشخصية.
+                (gen_random_uuid()::text, 'privacy-policy', 'سياسة الخصوصية', 'مرحباً بك في تطبيق ويندو. نحن نحترم خصوصيتك ونلتزم بحماية بياناتك الشخصية.
 
 نقوم بجمع المعلومات التالية:
 - معلومات الحساب (الاسم، البريد الإلكتروني)
@@ -9051,7 +9144,7 @@ async function initLegalPages() {
 لن نشارك معلوماتك مع أطراف ثالثة إلا بموافقتك أو عند الضرورة القانونية.
 
 للتواصل: support@windo.app'),
-                (gen_random_uuid()::text, 'terms', 'شروط الاستخدام', 'مرحباً بك في تطبيق ويتر. باستخدامك للتطبيق، فإنك توافق على الشروط التالية:
+                (gen_random_uuid()::text, 'terms', 'شروط الاستخدام', 'مرحباً بك في تطبيق ويندو. باستخدامك للتطبيق، فإنك توافق على الشروط التالية:
 
 1. الأهلية: يجب أن يكون عمرك 13 عاماً على الأقل.
 
@@ -9607,7 +9700,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log('');
     console.log('╔════════════════════════════════════════════════════════════╗');
     console.log('║                                                            ║');
-    console.log('║   🚀  ويتر Backend Server (Prisma + PostgreSQL)         ║');
+    console.log('║   🚀  ويندو Backend Server (Prisma + PostgreSQL)        ║');
     console.log('║                                                            ║');
     console.log(`║   📡  Server: http://0.0.0.0:${PORT}                          ║`);
     console.log(`║   🔗  API:    http://192.168.0.116:${PORT}/api               ║`);
